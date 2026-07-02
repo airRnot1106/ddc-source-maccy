@@ -9,6 +9,8 @@ import { UnixTime } from "./lib/time.ts";
 import { Clip, type ClipRepository, ClipValue } from "./lib/clip.ts";
 import { createMaccyClipRepository } from "./lib/maccy_repository.ts";
 import { createCachedClipRepository } from "./lib/cached_clip_repository.ts";
+import { createDedupedClipRepository } from "./lib/deduped_clip_repository.ts";
+import { createUseCountTracker } from "./lib/use_count_tracker.ts";
 
 type Params = {
   recentMs: number;
@@ -16,23 +18,38 @@ type Params = {
   types: string[];
   dbPath: string;
   maxByteLength: number;
+  dedupe: boolean;
+  excludeAfterUse: boolean;
+  maxUseCount: number;
 };
 
-// the full clip text, kept to expand multi-line clips on confirm
+// the full clip text and its copiedAt, kept to expand multi-line clips on
+// confirm and to key the use-count tracker
 type UserData = {
   value: string;
+  copiedAt: number;
 };
 
 export class Source extends BaseSource<Params, UserData> {
   #repository: ClipRepository | undefined;
   #configKey = "";
+  // survives repository rebuilds, since use counts are unrelated to dbPath/types
+  #tracker = createUseCountTracker();
 
-  // rebuild only when params change, so the cache survives across gathers
-  // while still honoring runtime reconfiguration
+  // rebuild only when params affecting the repository itself change, so the
+  // cache survives across gathers even as unrelated params (e.g. maxUseCount)
+  // are reconfigured at runtime
   #getRepository(params: Params): ClipRepository {
-    const key = JSON.stringify(params);
+    const key = JSON.stringify({
+      dbPath: params.dbPath,
+      types: params.types,
+      maxByteLength: params.maxByteLength,
+      recentMs: params.recentMs,
+      cacheTtlMs: params.cacheTtlMs,
+      dedupe: params.dedupe,
+    });
     if (this.#repository === undefined || key !== this.#configKey) {
-      this.#repository = createCachedClipRepository(
+      const cached = createCachedClipRepository(
         createMaccyClipRepository({
           dbPath: params.dbPath,
           types: params.types,
@@ -41,6 +58,9 @@ export class Source extends BaseSource<Params, UserData> {
         }),
         params.cacheTtlMs,
       );
+      this.#repository = params.dedupe
+        ? createDedupedClipRepository(cached)
+        : cached;
       this.#configKey = key;
     }
     return this.#repository;
@@ -50,18 +70,31 @@ export class Source extends BaseSource<Params, UserData> {
     { sourceParams }: GatherArguments<Params>,
   ): Promise<Item<UserData>[]> {
     const clips = await this.#getRepository(sourceParams).getAll();
+    const visible = sourceParams.excludeAfterUse
+      ? this.#tracker.filter(clips, sourceParams.maxUseCount)
+      : clips;
     const now = UnixTime.now();
-    return clips.map((clip) => ({
+    return visible.map((clip) => ({
       word: ClipValue.toWord(clip.value),
       abbr: Clip.toAbbr(clip, now),
       info: clip.value,
-      user_data: { value: clip.value },
+      user_data: { value: clip.value, copiedAt: clip.copiedAt },
     }));
   }
 
   override async onCompleteDone(
-    { denops, userData }: OnCompleteDoneArguments<Params, UserData>,
+    { sourceParams, denops, userData }: OnCompleteDoneArguments<
+      Params,
+      UserData
+    >,
   ): Promise<void> {
+    if (sourceParams.excludeAfterUse) {
+      this.#tracker.record(
+        ClipValue.from(userData.value),
+        UnixTime.from(userData.copiedAt),
+      );
+    }
+
     const lines = userData.value.split("\n");
     // the inserted word is the first line; nothing to expand for single-line clips
     if (lines.length <= 1) {
@@ -94,6 +127,9 @@ export class Source extends BaseSource<Params, UserData> {
       types: [],
       dbPath: "",
       maxByteLength: 0,
+      dedupe: false,
+      excludeAfterUse: false,
+      maxUseCount: 1,
     };
   }
 }

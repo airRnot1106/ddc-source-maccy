@@ -55,11 +55,14 @@ EXAMPLES                                          *ddc-source-maccy-examples*
 
 	vim.fn["ddc#custom#patch_global"]("sourceParams", {
 	  maccy = {
-	    recentMs      = 300000,
-	    cacheTtlMs    = 2000,
-	    types         = { "public.utf8-plain-text" },
-	    dbPath        = "~/Library/Containers/org.p0deje.Maccy/Data/Library/Application Support/Maccy/Storage.sqlite",
-	    maxByteLength = 10000,
+	    recentMs        = 300000,
+	    cacheTtlMs      = 2000,
+	    types           = { "public.utf8-plain-text" },
+	    dbPath          = "~/Library/Containers/org.p0deje.Maccy/Data/Library/Application Support/Maccy/Storage.sqlite",
+	    maxByteLength   = 10000,
+	    dedupe          = true,
+	    excludeAfterUse = true,
+	    maxUseCount     = 1,
 	  },
 	})
 <
@@ -103,6 +106,31 @@ maxByteLength	(number)
 		A value <= 0 emits nothing.
 
 		Default: 0
+
+                                              *ddc-source-maccy-param-dedupe*
+dedupe		(boolean)
+		Collapse clips that share the same text, keeping only the
+		most recently copied one.
+
+		Default: v:false
+
+                                     *ddc-source-maccy-param-excludeAfterUse*
+excludeAfterUse	(boolean)
+		Exclude a clip from candidates once it has been used (i.e.
+		its completion was confirmed) |ddc-source-maccy-param-maxUseCount|
+		times. Re-copying the same text resets its use count. Has no
+		effect unless combined with maxUseCount.
+
+		Default: v:false
+
+                                         *ddc-source-maccy-param-maxUseCount*
+maxUseCount	(number)
+		Number of times a clip may be used before it is excluded, when
+		excludeAfterUse is enabled. 0 excludes the clip immediately,
+		even before its first use. Ignored unless excludeAfterUse is
+		enabled.
+
+		Default: 1
 
 
 ==============================================================================
