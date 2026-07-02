@@ -91,7 +91,9 @@ export class Source extends BaseSource<Params, UserData> {
     if (sourceParams.excludeAfterUse) {
       this.#tracker.record(
         ClipValue.from(userData.value),
-        UnixTime.from(userData.copiedAt),
+        // user_data round-trips through vim's msgpack-rpc, which can hand
+        // back a bigint for what was a plain number
+        UnixTime.from(Number(userData.copiedAt)),
       );
     }
 
